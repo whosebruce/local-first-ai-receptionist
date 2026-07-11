@@ -1,0 +1,32 @@
+# Runtime state — never commit
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.log
+quarantine/
+state/
+
+# Secrets and env — never commit
+secrets.json
+.env
+*.pem
+*.key
+
+# Operator-local private detection patterns — never commit
+# (ship only security/local-patterns.example.json)
+security/local-patterns.json
+
+# Rendered overlay artifacts (machine-specific)
+integrations/hermes/rendered/
+integrations/hermes/overlay.lock.json
+*.overlay-backup-*
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/

@@ -1,0 +1,49 @@
+# A reply-with-mention in the private intake channel is a deterministic
+# trust-command CANDIDATE. Candidates are handled entirely by the isolated
+# receptionist and must NEVER reach the LLM: on ANY hook/import/config/
+# forwarding failure we still return early (fail closed) and post a
+# no-changes-made notice. Non-candidates continue to the normal path.
+# The candidate gate is deliberately dependency-free so a broken hook or
+# config cannot reopen the LLM path for a command.
+_rcpt_intake_channel = "{{INTAKE_CHANNEL_ID}}"
+_rcpt_candidate = False
+_rcpt_ch = ""
+try:
+    _rcpt_ch = str(getattr(getattr(message, "channel", None), "id", "") or "")
+    if _rcpt_ch == _rcpt_intake_channel and getattr(message, "reference", None) is not None:
+        _rcpt_bot_id = str(getattr(getattr(self._client, "user", None), "id", "") or "")
+        _rcpt_candidate = bool(_rcpt_bot_id) and any(
+            str(getattr(_m, "id", "")) == _rcpt_bot_id
+            for _m in (getattr(message, "mentions", None) or [])
+        )
+except Exception:
+    # Cannot classify the message at all: fail closed rather than risk an
+    # intake command reaching the model.
+    _rcpt_candidate = True
+if _rcpt_candidate:
+    _rcpt_handled = False
+    try:
+        import sys as _sys
+        _rcpt_mod = _sys.modules.get("receptionist_intake_hook")
+        if _rcpt_mod is None:
+            import importlib.util as _ilu
+            _rcpt_spec = _ilu.spec_from_file_location(
+                "receptionist_intake_hook", "{{HOOK_DIR}}/receptionist_intake_hook.py")
+            _rcpt_mod = _ilu.module_from_spec(_rcpt_spec)
+            _rcpt_spec.loader.exec_module(_rcpt_mod)
+            _sys.modules["receptionist_intake_hook"] = _rcpt_mod
+        _rcpt_bot_id = str(getattr(getattr(self._client, "user", None), "id", "") or "")
+        _rcpt_res = await _rcpt_mod.maybe_handle_intake(self, message, _rcpt_bot_id)
+        _rcpt_handled = _rcpt_res is not None
+    except Exception:
+        pass  # command swallowed (fail closed); notice below
+    if not _rcpt_handled:
+        try:
+            await self.send(
+                _rcpt_ch or _rcpt_intake_channel,
+                "Receptionist intake lane error — command NOT processed; "
+                "no trust change was made (fail closed).",
+            )
+        except Exception:
+            pass
+    return

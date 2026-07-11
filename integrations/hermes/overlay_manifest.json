@@ -1,0 +1,34 @@
+{
+  "manifest_version": 1,
+  "description": "Hook points for wiring the receptionist's Discord intake/routing into a locally hosted Hermes gateway. Pin the compatible Hermes commit in `compatible_hermes` after you verify the anchors on your checkout; any drift fails closed.",
+  "compatible_hermes": {
+    "note": "Set to the exact commit/tag of YOUR Hermes checkout after verifying anchors and running the full test battery. Re-verify after every update.",
+    "commit": "UNSET"
+  },
+  "hooks": [
+    {
+      "template": "intake_hook.py.tmpl",
+      "output": "receptionist_intake_hook.py"
+    },
+    {
+      "template": "delivery_hook.py.tmpl",
+      "output": "receptionist_delivery_hook.py"
+    }
+  ],
+  "targets": [
+    {
+      "name": "discord-intake",
+      "file": "plugins/platforms/discord/adapter.py",
+      "anchor": "await self._handle_message(message",
+      "insert": "before",
+      "snippet": "adapter_insert.py.tmpl"
+    },
+    {
+      "name": "webhook-delivery",
+      "file": "gateway/platforms/webhook.py",
+      "anchor": "result = await self._send_via_platform(",
+      "insert": "before",
+      "snippet": "webhook_insert.py.tmpl"
+    }
+  ]
+}

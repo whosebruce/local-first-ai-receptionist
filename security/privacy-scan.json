@@ -1,0 +1,338 @@
+{
+  "scanner": "privacy_scan.py",
+  "mode": "all",
+  "all_pass": true,
+  "total_findings": 0,
+  "modes": {
+    "working_tree": {
+      "mode": "working_tree",
+      "files_scanned": 60,
+      "all_pass": true,
+      "total_findings": 0,
+      "checks": [
+        {
+          "check": "account_marker_outside_public_exception",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "local_private_pattern",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "local_patterns_file_invalid",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "local_patterns_file_tracked",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "email_non_doc",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "phone_non_fiction",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "ipv4_non_doc",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "ipv6",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "platform_id_non_fake",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "home_absolute_path",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "hex_secret",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "assigned_secret",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "private_key_block",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "aws_access_key",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "git_credential_url",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "generated_or_binary_artifact",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "unreadable_or_binary",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        }
+      ]
+    },
+    "index": {
+      "mode": "index",
+      "files_scanned": 60,
+      "all_pass": true,
+      "total_findings": 0,
+      "checks": [
+        {
+          "check": "account_marker_outside_public_exception",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "local_private_pattern",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "local_patterns_file_invalid",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "local_patterns_file_tracked",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "email_non_doc",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "phone_non_fiction",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "ipv4_non_doc",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "ipv6",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "platform_id_non_fake",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "home_absolute_path",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "hex_secret",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "assigned_secret",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "private_key_block",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "aws_access_key",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "git_credential_url",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "generated_or_binary_artifact",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "unreadable_or_binary",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        }
+      ]
+    },
+    "history": {
+      "mode": "history",
+      "files_scanned": 61,
+      "all_pass": true,
+      "total_findings": 0,
+      "checks": [
+        {
+          "check": "account_marker_outside_public_exception",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "local_private_pattern",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "local_patterns_file_invalid",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "local_patterns_file_tracked",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "email_non_doc",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "phone_non_fiction",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "ipv4_non_doc",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "ipv6",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "platform_id_non_fake",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "home_absolute_path",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "hex_secret",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "assigned_secret",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "private_key_block",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "aws_access_key",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "git_credential_url",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "generated_or_binary_artifact",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        },
+        {
+          "check": "unreadable_or_binary",
+          "pass": true,
+          "count": 0,
+          "locations": []
+        }
+      ]
+    }
+  }
+}

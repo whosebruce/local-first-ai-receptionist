@@ -1,0 +1,38 @@
+# Local-First AI Receptionist — systemd user unit template.
+# Rendered by scripts/install.sh (substitutes __REPO_ROOT__ and __STATE_DIR__).
+# Review before installing. The sandbox denies all egress except loopback by
+# default; if your transport/model host is on a trusted LAN, add a narrow
+# IPAddressAllow line for THAT subnet only — never 0.0.0.0/0.
+
+[Unit]
+Description=Local-First AI Receptionist (tool-isolated)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=RECEPTIONIST_HOME=__STATE_DIR__
+ExecStart=/usr/bin/env python3 -m receptionist.app
+WorkingDirectory=__REPO_ROOT__/src
+Environment=PYTHONPATH=__REPO_ROOT__/src
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__STATE_DIR__
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=127.0.0.0/8
+IPAddressAllow=::1/128
+# NOTE: IPAddress{Deny,Allow} is enforced only where cgroup-v2 + eBPF is
+# available; on hosts without it systemd warns and the filter is a no-op. The
+# service's in-code local-only endpoint validation is the primary control; this
+# is defense-in-depth. If (and only if) your transport/model host is on a
+# trusted LAN, allow that specific subnet, e.g.:
+# IPAddressAllow=192.0.2.0/24
+
+[Install]
+WantedBy=default.target

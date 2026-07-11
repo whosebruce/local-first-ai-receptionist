@@ -1,0 +1,9 @@
+{
+  "description": "Template for operator-local private detection patterns. Copy this file to security/local-patterns.json (which is gitignored and must never be committed) and replace the synthetic placeholders below with case-insensitive regexes for your own private labels: internal hostnames, note-vault or ledger names, internal service names, task-ID prefixes, and similar identifiers that must never appear in the public tree. privacy_scan.py loads the file automatically when present and applies it in every mode (working tree, exact Git index, reachable history). Matches are reported as category/file/line only — neither your patterns nor the matched values are ever written to a scan report, and the local file itself is never content-scanned. A malformed local file fails the scan closed, and security/local-patterns.json appearing in the Git index or history is itself reported as a finding.",
+  "patterns": [
+    "my-private-vault-name",
+    "my-internal-hostname",
+    "my-internal-service-name",
+    "MYTRACKER-[0-9]{4,}"
+  ]
+}

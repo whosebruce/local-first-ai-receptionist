@@ -1,0 +1,19 @@
+# Honor the receptionist's additive route envelope when present; any
+# missing/invalid/forged route or pre-post failure falls through to the
+# legacy delivery below (the alert is never lost, never reaches a contact).
+try:
+    import sys as _sys
+    _rcpt_dmod = _sys.modules.get("receptionist_delivery_hook")
+    if _rcpt_dmod is None:
+        import importlib.util as _ilu
+        _rcpt_dspec = _ilu.spec_from_file_location(
+            "receptionist_delivery_hook", "{{HOOK_DIR}}/receptionist_delivery_hook.py")
+        _rcpt_dmod = _ilu.module_from_spec(_rcpt_dspec)
+        _rcpt_dspec.loader.exec_module(_rcpt_dmod)
+        _sys.modules["receptionist_delivery_hook"] = _rcpt_dmod
+    _rcpt_dres = await _rcpt_dmod.maybe_route_delivery(
+        self._resolve_discord_adapter(), content, payload)
+    if _rcpt_dres is not None:
+        return _rcpt_dres
+except Exception:
+    pass  # fall through to legacy delivery (fail-safe direction)

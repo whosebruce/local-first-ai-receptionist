@@ -1,0 +1,73 @@
+{
+  "config_version": 1,
+
+  "business_name": "Example Studio",
+  "assistant_name": "Assistant",
+
+  "listen_host": "127.0.0.1",
+  "listen_port": 8080,
+  "allow_private_lan_bind": false,
+
+  "relay_url": "",
+  "allow_private_lan_relay": false,
+
+  "transport": {
+    "kind": "bluebubbles",
+    "server_url": "",
+    "webhook_public_url": ""
+  },
+
+  "outbound": {
+    "enabled": false,
+    "max_auto_replies_per_contact_per_day": 4,
+    "ack_cooldown_seconds": 21600
+  },
+
+  "default_country_code": "1",
+
+  "discord": {
+    "enabled": false,
+    "guild_id": "",
+    "owner_user_id": "",
+    "bot_user_id": "",
+    "intake_channel_id": "",
+    "category_channels": {
+      "family": "",
+      "client": "",
+      "vendor": ""
+    },
+    "pending_alert_ttl_seconds": 3600
+  },
+
+  "tier2": {
+    "test_cohort_max": 10,
+    "test_ttl_seconds": 86400,
+    "sweep_interval_seconds": 60,
+    "context_max_turns": 12,
+    "max_reply_chars": 1200,
+    "fast_ack_cooldown_seconds": 3600,
+    "max_daily_replies": 60,
+    "image": {
+      "max_bytes": 8388608,
+      "max_per_message": 3,
+      "max_per_day": 10,
+      "retention_seconds": 86400,
+      "quarantine_dir": ""
+    },
+    "model": {
+      "base_url": "",
+      "model": "",
+      "num_ctx": 8192,
+      "timeout_seconds": 45,
+      "allow_private_lan": false
+    },
+    "vision": {
+      "base_url": "",
+      "model": "",
+      "timeout_seconds": 90,
+      "allow_private_lan": false
+    }
+  },
+
+  "faq_responses": {}
+}
