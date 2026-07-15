@@ -68,11 +68,23 @@ class StubTransport:
         self.sent: list[dict[str, Any]] = []
 
     def send_text(self, chat_id: str, text: str) -> dict[str, Any]:
-        self.sent.append({"chat_id": chat_id, "text": text})
-        return {"ok": True, "message_id": f"stub-{len(self.sent)}"}
+        message_id = f"stub-{len(self.sent) + 1}"
+        self.sent.append({"chat_id": chat_id, "text": text, "message_id": message_id})
+        return {"ok": True, "message_id": message_id}
 
     def fetch_attachment(self, attachment_id: str) -> bytes | None:
         return None
+
+    def verify_sent(
+        self, chat_id: str, text: str, message_id: str | None,
+        *, not_before_ms: int,
+    ) -> bool:
+        """The stub's in-memory record is its source of truth."""
+        return any(
+            item["chat_id"] == chat_id and item["text"] == text and
+            (not message_id or item.get("message_id") == message_id)
+            for item in self.sent
+        )
 
 
 class BlueBubblesTransport:
@@ -115,6 +127,46 @@ class BlueBubblesTransport:
         except Exception as exc:
             log.warning("attachment fetch failed: %s", type(exc).__name__)
             return None
+
+    def verify_sent(
+        self, chat_id: str, text: str, message_id: str | None,
+        *, not_before_ms: int,
+    ) -> bool:
+        """Read the BlueBubbles source history instead of trusting send status.
+
+        Verification is deliberately strict: from-me, exact text, matching
+        chat, not older than this attempt, and matching message ID when one was
+        returned. A failed/ambiguous query is never treated as success.
+        """
+        body = json.dumps({"limit": 100, "offset": 0, "sort": "DESC", "with": ["chat"]}).encode()
+        request = urllib.request.Request(
+            self._url("/api/v1/message/query"), data=body,
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                if response.status >= 300:
+                    return False
+                payload = json.loads(response.read())
+        except Exception as exc:
+            log.warning("outbound source verification failed: %s", type(exc).__name__)
+            return False
+        items = payload.get("data") or []
+        if isinstance(items, dict):
+            items = items.get("messages") or items.get("items") or []
+        for item in items:
+            if not isinstance(item, dict) or item.get("isFromMe") is not True:
+                continue
+            if item.get("text") != text:
+                continue
+            if int(item.get("dateCreated") or 0) < int(not_before_ms):
+                continue
+            if message_id and item.get("guid") != message_id:
+                continue
+            chats = item.get("chats") or []
+            if not any(isinstance(chat, dict) and chat.get("guid") == chat_id for chat in chats):
+                continue
+            return bool(item.get("guid"))
+        return False
 
 
 class Receptionist:
@@ -161,6 +213,11 @@ class Receptionist:
                 lead_id TEXT NOT NULL, chat_id TEXT NOT NULL,
                 category TEXT NOT NULL, status TEXT NOT NULL, message_id TEXT
             );
+            CREATE TABLE IF NOT EXISTS owner_seen_checks (
+                lead_id TEXT PRIMARY KEY, sender_mask TEXT NOT NULL,
+                category TEXT, created_at INTEGER NOT NULL, due_at INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending', sent_at INTEGER
+            );
             """
         )
         self.db.commit()
@@ -196,9 +253,13 @@ class Receptionist:
 
     # ---------- outbound (owner-gated) ----------
 
-    def send_reply(self, chat_id: str, lead: str, category: str, text: str) -> str:
+    def send_reply_with_result(
+        self, chat_id: str, lead: str, category: str, text: str,
+    ) -> dict[str, Any]:
+        """Attempt one send and retain metadata needed for source verification."""
         status = "outbound_disabled"
         message_id = None
+        started_at_ms = int(time.time() * 1000)
         if self.outbound_enabled or isinstance(self.transport, StubTransport):
             try:
                 result = self.transport.send_text(chat_id, text)
@@ -216,7 +277,13 @@ class Receptionist:
             self.db.commit()
         if status == "sent" and not category.startswith("tier2"):
             self._record_reply_limit(lead, category)
-        return status
+        return {
+            "status": status, "message_id": message_id,
+            "started_at_ms": started_at_ms,
+        }
+
+    def send_reply(self, chat_id: str, lead: str, category: str, text: str) -> str:
+        return str(self.send_reply_with_result(chat_id, lead, category, text)["status"])
 
     def may_auto_reply(self, lead: str, category: str) -> bool:
         now = self._now()
@@ -292,6 +359,79 @@ class Receptionist:
         except Exception as exc:
             log.warning("discord route build failed lead=%s: %s", lead, type(exc).__name__)
             return None
+
+    # ---------- optional secondary owner seen-check ----------
+
+    def queue_owner_seen_check(
+        self, lead: str, sender_mask: str, category: str | None,
+    ) -> bool:
+        """Queue one durable secondary alert for a newly observed Tier-1 lead.
+
+        This feature is disabled by default. When enabled, the ordinary owner
+        relay receives an ``owner_seen_check`` route after the configured delay
+        unless any tier decision was already recorded. The relay adapter may
+        deliver that route over a secondary channel such as SMS/iMessage.
+        """
+        cfg = self.config.get("owner_seen_check") or {}
+        if not bool(cfg.get("enabled", False)):
+            return False
+        now = self._now()
+        delay = max(1, int(cfg.get("delay_seconds", 180)))
+        cur = self.db.execute(
+            "INSERT OR IGNORE INTO owner_seen_checks("
+            "lead_id,sender_mask,category,created_at,due_at,status) "
+            "VALUES(?,?,?,?,?,'pending')",
+            (lead, sender_mask, category, now, now + delay),
+        )
+        self.db.commit()
+        return cur.rowcount == 1
+
+    def process_owner_seen_checks(self) -> list[dict[str, str]]:
+        """Relay due seen-checks once; suppress them after any owner decision."""
+        now = self._now()
+        rows = self.db.execute(
+            "SELECT lead_id,sender_mask,category FROM owner_seen_checks "
+            "WHERE status='pending' AND due_at<=? ORDER BY due_at,lead_id", (now,),
+        ).fetchall()
+        outcomes: list[dict[str, str]] = []
+        for lead, sender_mask, category in rows:
+            decided = self.db.execute(
+                "SELECT 1 FROM tier2_contacts WHERE lead_id=? LIMIT 1", (lead,),
+            ).fetchone()
+            if decided:
+                self.db.execute(
+                    "UPDATE owner_seen_checks SET status='cancelled_decided' "
+                    "WHERE lead_id=? AND status='pending'", (lead,),
+                )
+                self.db.commit()
+                outcomes.append({"lead_id": lead, "status": "cancelled_decided"})
+                continue
+            claimed = self.db.execute(
+                "UPDATE owner_seen_checks SET status='sending' "
+                "WHERE lead_id=? AND status='pending'", (lead,),
+            )
+            self.db.commit()
+            if claimed.rowcount != 1:
+                continue
+            message = (
+                "OWNER SEEN-CHECK — Did you see this new person in the intake queue?\n"
+                f"Lead: {lead} ({sender_mask})\n"
+                f"First-message category: {category or 'no-reply'}\n"
+                "They remain Tier 1; nothing was approved automatically."
+            )
+            try:
+                self.relay(message, route={"kind": "owner_seen_check", "lead_id": lead})
+                status = "sent"
+            except Exception as exc:
+                log.warning("owner seen-check relay failed lead=%s: %s", lead, type(exc).__name__)
+                status = "failed"
+            self.db.execute(
+                "UPDATE owner_seen_checks SET status=?,sent_at=? WHERE lead_id=?",
+                (status, now, lead),
+            )
+            self.db.commit()
+            outcomes.append({"lead_id": lead, "status": status})
+        return outcomes
 
     # ---------- inbound pipeline ----------
 
@@ -385,6 +525,8 @@ class Receptionist:
         if tier1.is_invoice_request(text):
             alert += "\nInvoice/payment interest detected (notification-only; no invoice created/sent)."
         route = None if is_group else self._discord_route(lead, fingerprint, None, promoted=False)
+        if route is not None:
+            self.queue_owner_seen_check(lead, sender_mask, category)
         self._safe_relay(alert, route=route)
         return {"status": "ok", "lead_id": lead, "category": category, "reply_status": reply_status}
 
@@ -526,6 +668,7 @@ class Receptionist:
             self.tier2.expire_due()
             self.notify_tier2_expiries()
             self.tier2.cleanup_images()
+            self.process_owner_seen_checks()
             try:
                 self.discord.prune_pending(
                     int((self.config.get("discord") or {}).get("pending_alert_ttl_seconds", 3600)))
@@ -574,6 +717,70 @@ class Receptionist:
             "reason": result.get("reason"),
             "readback": result.get("readback"),
             "llm": False,
+        }
+
+    def handle_discord_contact_reply(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Authorize, send once, and verify a reviewed bound-thread reply.
+
+        The HTTP response intentionally excludes the raw body and private chat
+        binding. A send response alone is not proof: real transports must read
+        the message back from their source history before the result is marked
+        verified.
+        """
+        with self._db_lock:
+            result = self.discord.handle_contact_reply(
+                user_id=str(payload.get("user_id") or ""),
+                guild_id=str(payload.get("guild_id") or ""),
+                channel_id=str(payload.get("channel_id") or ""),
+                parent_channel_id=(str(payload["parent_channel_id"])
+                                   if payload.get("parent_channel_id") else None),
+                message_id=str(payload.get("message_id") or ""),
+                raw_text=str(payload.get("text") or ""),
+                is_dm=bool(payload.get("is_dm")),
+                is_group=bool(payload.get("is_group")),
+            )
+        if not result.get("authorized"):
+            return {
+                "authorized": False, "action": "reply",
+                "lead_id": result.get("lead_id"), "reason": result.get("reason"),
+                "readback": result.get("readback"), "llm": False,
+            }
+
+        # Do network I/O outside the shared SQLite lock. Authorization already
+        # inserted the command ID, so concurrent/replayed deliveries fail closed
+        # while this one-attempt send is in flight.
+        send = self.send_reply_with_result(
+            result["chat_id"], result["lead_id"],
+            "tier2-reviewed-discord", result["message"],
+        )
+        verified = False
+        if send["status"] == "sent":
+            verifier = getattr(self.transport, "verify_sent", None)
+            if callable(verifier):
+                try:
+                    verified = bool(verifier(
+                        result["chat_id"], result["message"], send.get("message_id"),
+                        not_before_ms=int(send["started_at_ms"]),
+                    ))
+                except Exception as exc:
+                    log.warning("reviewed reply verification failed: %s", type(exc).__name__)
+        final_status = "verified" if verified else str(send["status"])
+        if send["status"] == "sent" and not verified:
+            final_status = "sent_unverified"
+        readback = (
+            f"Reviewed reply verified for lead {result['lead_id']}."
+            if verified else
+            f"Reply not verified for lead {result['lead_id']} (status: {final_status}); do not retry automatically."
+        )
+        with self._db_lock:
+            self.discord.complete_contact_reply(
+                str(payload.get("message_id") or ""), final_status, readback,
+                send.get("message_id"),
+            )
+        return {
+            "authorized": True, "action": "reply", "lead_id": result["lead_id"],
+            "status": final_status, "verified": verified,
+            "readback": readback, "llm": False,
         }
 
     def handle_discord_alert_posted(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -650,7 +857,10 @@ def make_handler(receptionist: Receptionist):
                     return
                 self._json(200, receptionist.handle_inbound(payload))
                 return
-            if parsed.path in ("/discord/intake-command", "/discord/alert-posted"):
+            if parsed.path in (
+                "/discord/intake-command", "/discord/contact-reply",
+                "/discord/alert-posted",
+            ):
                 signature = self.headers.get(security.SIGNATURE_HEADER, "")
                 if not receptionist.verify_discord_hook(raw, signature):
                     self._json(401, {"error": "unauthorized"})
@@ -662,6 +872,8 @@ def make_handler(receptionist: Receptionist):
                     return
                 if parsed.path == "/discord/intake-command":
                     self._json(200, receptionist.handle_discord_intake_command(payload))
+                elif parsed.path == "/discord/contact-reply":
+                    self._json(200, receptionist.handle_discord_contact_reply(payload))
                 else:
                     self._json(200, receptionist.handle_discord_alert_posted(payload))
                 return

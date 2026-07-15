@@ -6,7 +6,7 @@ from receptionist.tier2 import COHORT_TEST, Tier2Manager
 
 from .helpers import (
     BOT_ID, CLIENT_CHANNEL, CONTACT_PHONE, CONTACT_PHONE_2, FAMILY_CHANNEL,
-    INTAKE_CHANNEL, OTHER_CHANNEL, OTHER_USER, OWNER_ID, Clock, make_config,
+    GUILD_ID, INTAKE_CHANNEL, OTHER_CHANNEL, OTHER_USER, OWNER_ID, Clock, make_config,
     make_temp_dir,
 )
 
@@ -140,7 +140,7 @@ class TestReplayAndResolveOnce(RouterFixture):
     def test_cohort_full_reopens_alert_for_retry(self):
         self.tier2.test_cohort_max = 0
         self.open_alert()
-        result = self.command()
+        result = self.command(text=f"<@{BOT_ID}> approve family test")
         self.assertFalse(result["authorized"])
         self.assertEqual(result["reason"], "action_failed")
         status = self.db.execute(
@@ -152,14 +152,22 @@ class TestReplayAndResolveOnce(RouterFixture):
 
 
 class TestApprovalSemantics(RouterFixture):
-    def test_approve_maps_to_temporary_test_cohort_only(self):
+    def test_approve_maps_to_standing_cohort_by_default(self):
         self.open_alert()
         result = self.command()
         self.assertTrue(result["authorized"])
         self.assertTrue(result["resolved"])
         contact = self.tier2.resolve_status(LEAD, self.fingerprint)
-        self.assertEqual(contact["cohort"], COHORT_TEST)  # never standing
-        self.assertIn("not a standing promotion", result["readback"])
+        self.assertEqual(contact["cohort"], "standing")
+        self.assertIn("standing Tier-2", result["readback"])
+
+    def test_explicit_test_suffix_maps_to_temporary_cohort(self):
+        self.open_alert()
+        result = self.command(text=f"<@{BOT_ID}> approve family test")
+        self.assertTrue(result["authorized"])
+        contact = self.tier2.resolve_status(LEAD, self.fingerprint)
+        self.assertEqual(contact["cohort"], COHORT_TEST)
+        self.assertIn("24h", result["readback"])
 
     def test_tier1_and_block_work_against_correlated_lead_only(self):
         self.open_alert()
@@ -175,7 +183,7 @@ class TestApprovalSemantics(RouterFixture):
 
     def test_expired_cohort_membership_is_gone_before_next_decision(self):
         self.open_alert()
-        self.command()
+        self.command(text=f"<@{BOT_ID}> approve family test")
         self.clock.advance(86401)
         self.assertIsNone(self.tier2.resolve_status(LEAD, self.fingerprint))
 
@@ -185,6 +193,96 @@ class TestApprovalSemantics(RouterFixture):
             "receptionist.discord_routing", fromlist=["x"]))
         for forbidden in ("send_text", "send_reply", "message/text", "chatGuid"):
             self.assertNotIn(forbidden, source)
+
+
+class TestReviewedContactReplies(RouterFixture):
+    THREAD = "510000000000000009"
+
+    def activate(self):
+        admin = self.tier2.handle_admin_command(f"tier2 {LEAD} family", is_group=False)
+        self.assertTrue(admin["ok"])
+        self.router.record_thread(LEAD, "family", FAMILY_CHANNEL, self.THREAD)
+
+    def reply(self, **overrides):
+        values = {
+            "user_id": OWNER_ID, "guild_id": GUILD_ID,
+            "channel_id": self.THREAD, "parent_channel_id": FAMILY_CHANNEL,
+            "message_id": "500000000000000071", "raw_text": "reply Reviewed hello",
+            "is_dm": False, "is_group": False,
+        }
+        values.update(overrides)
+        return self.router.handle_contact_reply(**values)
+
+    def test_exact_reply_preserves_body_and_binds_active_thread(self):
+        self.activate()
+        result = self.reply(raw_text="RePlY First line\nSecond line")
+        self.assertTrue(result["authorized"])
+        self.assertEqual(result["message"], "First line\nSecond line")
+        self.assertEqual(result["chat_id"], "chat-1")
+        self.assertFalse(result["llm"])
+
+    def test_reply_rejects_wrong_user_guild_parent_and_thread(self):
+        self.activate()
+        cases = [
+            ({"user_id": OTHER_USER}, "not_owner"),
+            ({"guild_id": "900000000000000099"}, "wrong_guild"),
+            ({"parent_channel_id": CLIENT_CHANNEL}, "wrong_parent_channel"),
+            ({"channel_id": "510000000000000099"}, "unknown_thread"),
+        ]
+        for index, (kwargs, reason) in enumerate(cases):
+            kwargs["message_id"] = f"50000000000000008{index}"
+            self.assertEqual(self.reply(**kwargs)["reason"], reason)
+
+    def test_reply_rejects_identity_drift_inactive_and_oversize(self):
+        self.activate()
+        self.tier2.record_lead_identity(
+            LEAD, CONTACT_PHONE_2, "chat-1", "phone ending 0101")
+        self.assertEqual(self.reply()["reason"], "fingerprint_mismatch")
+        # Restore, then downgrade.
+        self.tier2.record_lead_identity(LEAD, CONTACT_PHONE, "chat-1", "phone ending 0100")
+        self.assertTrue(self.tier2.handle_admin_command(f"tier1 {LEAD}", is_group=False)["ok"])
+        self.assertEqual(self.reply(message_id="500000000000000091")["reason"], "lead_not_active")
+        self.activate()
+        self.assertEqual(
+            self.reply(message_id="500000000000000092", raw_text="reply " + "x" * 4001)["reason"],
+            "message_too_long",
+        )
+
+    def test_reply_rejects_chat_and_category_binding_drift(self):
+        self.activate()
+        self.tier2.record_lead_identity(
+            LEAD, CONTACT_PHONE, "changed-chat", "phone ending 0100")
+        self.assertEqual(
+            self.reply(message_id="500000000000000093")["reason"],
+            "chat_binding_mismatch",
+        )
+        self.tier2.record_lead_identity(
+            LEAD, CONTACT_PHONE, "chat-1", "phone ending 0100")
+        self.db.execute(
+            "UPDATE tier2_contacts SET category='client' WHERE lead_id=?", (LEAD,))
+        self.db.commit()
+        self.assertEqual(
+            self.reply(message_id="500000000000000094")["reason"],
+            "category_binding_mismatch",
+        )
+
+    def test_reply_is_replay_safe_and_stores_no_raw_body(self):
+        self.activate()
+        body = "private reviewed fixture body"
+        first = self.reply(raw_text="reply " + body)
+        self.assertTrue(first["authorized"])
+        self.router.complete_contact_reply(
+            "500000000000000071", "verified", "Verified once", "synthetic-message-id")
+        duplicate = self.reply(raw_text="reply " + body)
+        self.assertFalse(duplicate["authorized"])
+        self.assertEqual(duplicate["reason"], "duplicate_reply")
+        row = self.db.execute(
+            "SELECT message_sha256,message_length,readback FROM discord_contact_replies"
+        ).fetchone()
+        self.assertEqual(row[1], len(body))
+        self.assertEqual(row[2], "Verified once")
+        dump = "\n".join(self.db.iterdump())
+        self.assertNotIn(body, dump)
 
 
 class TestRoutingPlans(RouterFixture):

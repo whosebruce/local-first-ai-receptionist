@@ -39,6 +39,11 @@
     "pending_alert_ttl_seconds": 3600
   },
 
+  "owner_seen_check": {
+    "enabled": false,
+    "delay_seconds": 180
+  },
+
   "tier2": {
     "test_cohort_max": 10,
     "test_ttl_seconds": 86400,

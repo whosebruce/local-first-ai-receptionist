@@ -185,9 +185,11 @@ prose like "block out some time").
   bound to lead ID + keyed fingerprint.
 - **No non-owner trust change** via iMessage or Discord; nine Discord rejection
   classes (forged/cross-channel/resolved reference, wrong user/channel, DM,
-  group, no mention, `approve all`, replay) all fail closed; approvals map only
-  to the temporary cohort; permanent promotion and unblock are unreachable via
-  Discord.
+  group, no mention, `approve all`, replay) all fail closed. **Historical
+  note:** this initial review covered temporary-only Discord approvals. The
+  later standing/default + explicit-`test` behavior and reviewed-reply path are
+  covered by the current regression suite and threat model; unblock remains
+  unreachable through Discord.
 - **Replay/resolve-once:** inbound dedupe by event ID, command-message
   idempotency, atomic single-alert claim, `INSERT OR IGNORE` reactions, and
   idempotent expiry all hold; an expired grant cannot be resurrected.

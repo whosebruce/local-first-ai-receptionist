@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 from .helpers import (
-    BOT_ID, CLIENT_CHANNEL, FAMILY_CHANNEL, INTAKE_CHANNEL, OTHER_CHANNEL,
+    BOT_ID, CLIENT_CHANNEL, FAMILY_CHANNEL, GUILD_ID, INTAKE_CHANNEL, OTHER_CHANNEL,
     VENDOR_CHANNEL, make_config, make_temp_dir,
 )
 
@@ -113,6 +113,8 @@ class TestApplyRollbackDrift(OverlayFixture):
         patched = self.adapter.read_text()
         self.assertIn("receptionist-overlay:discord-intake:begin", patched)
         self.assertIn(INTAKE_CHANNEL, patched)
+        self.assertIn("_rcpt_parent", patched)
+        self.assertIn('_rcpt_lower.startswith("reply ")', patched)
         compile(patched, str(self.adapter), "exec")  # still valid python
         compile(self.webhook.read_text(), str(self.webhook), "exec")
         backups = list(self.adapter.parent.glob("adapter.py.overlay-backup-*"))
@@ -299,7 +301,23 @@ class TestRenderedHooksFailClosed(OverlayFixture):
         msg.reference = types.SimpleNamespace(message_id=500000000000000051) if ref else None
         msg.mentions = [types.SimpleNamespace(id=int(m)) for m in mentions]
         msg.content = "approve family"
-        msg.guild = object()
+        msg.guild = types.SimpleNamespace(id=int(GUILD_ID))
+        return msg
+
+    def thread_reply(self, text="reply Reviewed hello"):
+        class Thread:
+            pass
+
+        msg = types.SimpleNamespace()
+        msg.channel = Thread()
+        msg.channel.id = 510000000000000050
+        msg.channel.parent_id = int(FAMILY_CHANNEL)
+        msg.author = types.SimpleNamespace(id=int("900000000000000001"))
+        msg.id = 500000000000000052
+        msg.reference = None
+        msg.mentions = []
+        msg.content = text
+        msg.guild = types.SimpleNamespace(id=int(GUILD_ID))
         return msg
 
     def test_should_forward_only_reply_with_mention_in_intake(self):
@@ -311,6 +329,15 @@ class TestRenderedHooksFailClosed(OverlayFixture):
             extract(self.message(ref=False)), BOT_ID))
         self.assertFalse(self.intake_hook.should_forward(
             extract(self.message(mentions=())), BOT_ID))
+
+    def test_exact_thread_reply_is_intercepted_before_model(self):
+        fields = self.intake_hook.extract_fields(self.thread_reply())
+        self.assertTrue(self.intake_hook.contact_reply_candidate(fields, BOT_ID))
+        self.assertEqual(fields["parent_channel_id"], FAMILY_CHANNEL)
+        self.assertEqual(fields["guild_id"], GUILD_ID)
+        for text in ("hello", "please reply hello", "reply", "replied hello"):
+            fields = self.intake_hook.extract_fields(self.thread_reply(text))
+            self.assertFalse(self.intake_hook.contact_reply_candidate(fields, BOT_ID))
 
     def test_forward_error_swallows_command_fail_closed(self):
         # No receptionist is listening; _post raises -> the hook must still

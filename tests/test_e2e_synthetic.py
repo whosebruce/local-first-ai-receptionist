@@ -24,11 +24,13 @@ class TestSyntheticEndToEnd(unittest.TestCase):
     def tearDown(self):
         self.r.close()
 
-    def approve(self, alert_msg_id: str, command_msg_id: str, category="family"):
+    def approve(self, alert_msg_id: str, command_msg_id: str, category="family", *, temporary=True):
+        suffix = " test" if temporary else ""
         return self.r.handle_discord_intake_command({
             "user_id": OWNER_ID, "channel_id": INTAKE_CHANNEL,
             "message_id": command_msg_id, "referenced_message_id": alert_msg_id,
-            "mentioned_ids": [BOT_ID], "text": f"<@{BOT_ID}> approve {category}"})
+            "mentioned_ids": [BOT_ID],
+            "text": f"<@{BOT_ID}> approve {category}{suffix}"})
 
     def bind_latest_alert(self, message_id: str) -> None:
         token = self.r.db.execute(

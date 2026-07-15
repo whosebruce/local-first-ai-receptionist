@@ -79,10 +79,12 @@ information, money-adjacent decisions, and the owner's broader agent stack.
   posted, using exact grammar, can change trust. Nine distinct rejection
   classes are tested, including forged/cross-channel/resolved references and
   `approve all`.
-- Approvals map only to the temporary 24h cohort; permanent promotion and
-  unblock are not exposed via Discord at all.
-- Threads are internal audit lanes; no module in this repo has a path from
-  Discord input to a contact-facing send (asserted by test).
+- Plain approvals map to standing Tier 2; only an exact trailing `test` maps
+  to the temporary 24h cohort. Unblock is not exposed via Discord.
+- Ordinary thread discussion is internal. The sole reviewed reply path requires
+  exact syntax plus owner, guild, bound thread/parent/category, active-contact,
+  keyed-fingerprint, and chat-binding checks. It persists only a digest/length,
+  sends once, and requires transport source read-back before claiming verified.
 - Route envelopes consumed by the gateway hook are allowlist-checked against
   the receptionist's own channel config; forged channels fall back to legacy
   delivery. Callback bodies are HMAC-signed; tampered bodies are rejected.

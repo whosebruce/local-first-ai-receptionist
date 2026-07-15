@@ -49,6 +49,12 @@ non-owner senders) fails closed and changes nothing.
 Every command returns a deterministic `TIER2 ADMIN OK/FAILED` read-back.
 First activation also sends the contact a one-time beta disclosure.
 
+Discord approvals use the same categories: `@bot approve family` is standing,
+while `@bot approve family test` is temporary. In a bound active Tier-2 thread,
+the configured owner may send exactly `reply <reviewed message>`. The message is
+sent once, read back from the transport when supported, and never automatically
+retried after an uncertain result. See `docs/DISCORD.md`.
+
 ## What Tier 2 can and cannot do
 
 - Conversation runs with **no tools of any kind**. The model (when
@@ -72,7 +78,10 @@ sqlite3 ~/.local/state/ai-receptionist/state.sqlite3 \
 ```
 
 `outbound` records every send attempt with status; `inbound` records every
-event with its classification and reply status.
+event with its classification and reply status. `discord_contact_replies`
+stores only the command ID, lead binding, message digest/length, and result —
+not the reviewed body. `owner_seen_checks` records the optional delayed
+second-channel alert lifecycle.
 
 ## Routine operations
 

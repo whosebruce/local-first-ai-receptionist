@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.0 — 2026-07-15
+
+- Discord approvals now create standing Tier-2 grants by default; an exact
+  trailing `test` requests the temporary 24-hour cohort.
+- Added deterministic reviewed replies from bound private lead threads through
+  exact `reply <message>` syntax. Authorization binds owner, guild, thread,
+  parent category, active grant, keyed identity, and chat; durable state stores
+  only a digest/length and never the reviewed body.
+- Added one-attempt transport sending with BlueBubbles source-history read-back.
+  Ambiguous sends are reported `sent_unverified` and are never auto-retried.
+- Added optional, disabled-by-default delayed owner seen-checks for genuinely
+  new leads that remain undecided after the configured interval.
+- Updated the Hermes overlay to intercept reviewed thread replies before any
+  LLM and forward them over the existing HMAC-authenticated local hook.
+- Expanded regression coverage and documentation for the new security
+  boundaries, replay behavior, storage minimization, and safe defaults. See
+  `security/RELEASE-1.1-ADVERSARIAL-REVIEW.md`.
+
 ## 1.0.0 — 2026-07-11
 
 Initial public release.

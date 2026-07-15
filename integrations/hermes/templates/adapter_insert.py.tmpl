@@ -1,8 +1,8 @@
-# A reply-with-mention in the private intake channel is a deterministic
-# trust-command CANDIDATE. Candidates are handled entirely by the isolated
-# receptionist and must NEVER reach the LLM: on ANY hook/import/config/
-# forwarding failure we still return early (fail closed) and post a
-# no-changes-made notice. Non-candidates continue to the normal path.
+# A reply-with-mention in the private intake channel, or exact
+# `reply <message>` syntax in a guild thread, is a deterministic receptionist
+# CANDIDATE. Candidates are handled entirely by the isolated receptionist and
+# must NEVER reach the LLM: on ANY hook/import/config/forwarding failure we
+# still return early (fail closed). Non-candidates continue normally.
 # The candidate gate is deliberately dependency-free so a broken hook or
 # config cannot reopen the LLM path for a command.
 _rcpt_intake_channel = "{{INTAKE_CHANNEL_ID}}"
@@ -10,11 +10,26 @@ _rcpt_candidate = False
 _rcpt_ch = ""
 try:
     _rcpt_ch = str(getattr(getattr(message, "channel", None), "id", "") or "")
+    _rcpt_bot_id = str(getattr(getattr(self._client, "user", None), "id", "") or "")
     if _rcpt_ch == _rcpt_intake_channel and getattr(message, "reference", None) is not None:
-        _rcpt_bot_id = str(getattr(getattr(self._client, "user", None), "id", "") or "")
         _rcpt_candidate = bool(_rcpt_bot_id) and any(
             str(getattr(_m, "id", "")) == _rcpt_bot_id
             for _m in (getattr(message, "mentions", None) or [])
+        )
+    if not _rcpt_candidate:
+        _rcpt_channel = getattr(message, "channel", None)
+        _rcpt_parent = getattr(_rcpt_channel, "parent_id", None) or getattr(
+            getattr(_rcpt_channel, "parent", None), "id", None)
+        _rcpt_text = str(getattr(message, "content", "") or "").lstrip()
+        for _rcpt_prefix in (f"<@{_rcpt_bot_id}>", f"<@!{_rcpt_bot_id}>"):
+            if _rcpt_bot_id and _rcpt_text.startswith(_rcpt_prefix):
+                _rcpt_text = _rcpt_text[len(_rcpt_prefix):].lstrip()
+                break
+        _rcpt_lower = _rcpt_text.lower()
+        _rcpt_candidate = bool(
+            getattr(message, "guild", None) is not None and _rcpt_parent and
+            (_rcpt_lower.startswith("reply ") or _rcpt_lower.startswith("reply\t")) and
+            _rcpt_text[6:].strip()
         )
 except Exception:
     # Cannot classify the message at all: fail closed rather than risk an
@@ -41,8 +56,8 @@ if _rcpt_candidate:
         try:
             await self.send(
                 _rcpt_ch or _rcpt_intake_channel,
-                "Receptionist intake lane error — command NOT processed; "
-                "no trust change was made (fail closed).",
+                "Receptionist command lane error — command NOT processed and "
+                "nothing was sent or changed (fail closed).",
             )
         except Exception:
             pass

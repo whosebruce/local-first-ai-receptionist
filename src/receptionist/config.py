@@ -66,6 +66,13 @@ def default_config() -> dict[str, Any]:
             "category_channels": {},
             "pending_alert_ttl_seconds": 3600,
         },
+        "owner_seen_check": {
+            # Optional second-channel nudge for a genuinely new lead. The same
+            # HMAC-signed relay receives route.kind=owner_seen_check; the local
+            # adapter decides whether that means SMS/iMessage/etc.
+            "enabled": False,
+            "delay_seconds": 180,
+        },
         "tier2": {
             "test_cohort_max": 10,
             "test_ttl_seconds": 86400,
@@ -183,6 +190,10 @@ def validate(config: dict[str, Any]) -> dict[str, Any]:
             if category not in CATEGORIES:
                 raise ConfigError(f"unknown discord category {category!r}")
             _validate_snowflake(f"discord.category_channels.{category}", str(channel))
+    seen_check = config.get("owner_seen_check") or {}
+    delay = int(seen_check.get("delay_seconds", 180))
+    if delay < 1 or delay > 86400:
+        raise ConfigError("owner_seen_check.delay_seconds must be between 1 and 86400")
     # An empty quarantine_dir (as shipped in the example config) resolves to a
     # default under the state dir so a fresh install starts without edits.
     image_cfg = (config.get("tier2") or {}).get("image") or {}

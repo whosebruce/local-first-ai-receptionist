@@ -67,7 +67,10 @@ python3 render_overlay.py rollback --hermes-root /path/to/your/hermes
 
 - A Discord `on_message` snippet that treats an owner reply-with-mention in
   the intake channel as a deterministic command candidate and forwards it to
-  the receptionist (never to the model).
+  the receptionist (never to the model). It also intercepts exact
+  `reply <message>` syntax in threads before the model and forwards the raw
+  owner/guild/thread/parent fields to `/discord/contact-reply`; the isolated
+  receptionist performs every authorization and transport check.
 - A webhook-delivery snippet that honors the receptionist's additive `route`
   envelope (intake vs category channel + stable thread) and falls back to your
   legacy delivery on any missing/invalid/forged route.

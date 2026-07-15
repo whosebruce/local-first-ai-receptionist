@@ -10,15 +10,18 @@ lives OUTSIDE any model:
     replay-resistant correlation to the stable lead ID + keyed fingerprint.
   * Only the configured owner user can change a lead's trust, by replying to
     a genuine, unresolved intake alert with an exact `@bot approve
-    family|client|vendor`, `@bot tier1`, or `@bot block` command. Nothing
+    family|client|vendor` (standing), `@bot approve family|client|vendor test`
+    (temporary), `@bot tier1`, or `@bot block` command. Nothing
     else — not ordinary prose, not a forged/copied/cross-channel/deleted/
     expired/resolved reference, not another user, DM, group, or missing
     mention — can change trust.
-  * Approvals map conservatively to the temporary 24-hour `tier2-test`
-    cohort, never to standing Tier 2. Permanent promotion and `unblock` are
-    not exposed through Discord at all.
+  * Approvals map to standing Tier 2 by default. Only an exact trailing
+    `test` requests the temporary 24-hour `tier2-test` cohort. `unblock`
+    remains unavailable through Discord.
   * After promotion, mirrored messages route by category into the matching
-    private channel and a stable per-lead thread reused across restarts.
+    private channel and a stable per-lead thread reused across restarts. An
+    exact `reply <message>` in that bound thread authorizes one reviewed
+    response; the router has no network capability and persists only a digest.
 
 The Discord bot is a thin transport: it posts what this module decides and
 forwards the owner's intake replies here. It never invokes an LLM for a
@@ -27,6 +30,7 @@ contact — Discord threads are internal audit/follow-up lanes only.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import logging
 import re
@@ -35,9 +39,10 @@ from typing import Any, Callable
 
 log = logging.getLogger("receptionist.discord")
 
-# Exact, case-insensitive intake command grammar. `approve all`, a bare
-# `approve`, permanent `tier2`, `unblock`, and any extra words fail closed.
-_APPROVE_RE = re.compile(r"^approve\s+(family|client|vendor)$", re.I)
+# Exact, case-insensitive intake command grammar. A plain approval is standing;
+# only an exact trailing `test` requests the temporary cohort. `approve all`,
+# a bare `approve`, raw tier commands, `unblock`, and extra words fail closed.
+_APPROVE_RE = re.compile(r"^approve\s+(family|client|vendor)(?:\s+(test))?$", re.I)
 _TIER1_RE = re.compile(r"^tier1$", re.I)
 _BLOCK_RE = re.compile(r"^block$", re.I)
 
@@ -101,6 +106,13 @@ class DiscordRouter:
                 message_id TEXT PRIMARY KEY, ts INTEGER NOT NULL,
                 alert_message_id TEXT, action TEXT, lead_id TEXT,
                 ok INTEGER NOT NULL, readback TEXT
+            );
+            CREATE TABLE IF NOT EXISTS discord_contact_replies (
+                message_id TEXT PRIMARY KEY, ts INTEGER NOT NULL,
+                guild_id TEXT NOT NULL, thread_id TEXT NOT NULL,
+                lead_id TEXT NOT NULL, message_sha256 TEXT NOT NULL,
+                message_length INTEGER NOT NULL, status TEXT NOT NULL,
+                readback TEXT, message_id_transport TEXT
             );
             CREATE TABLE IF NOT EXISTS discord_audit (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL,
@@ -240,24 +252,179 @@ class DiscordRouter:
         return " ".join(t.split())
 
     def parse_command(self, text: str) -> dict[str, Any] | None:
-        """Return {'action','category'} for an exact command, else None."""
+        """Return the exact action/category/cohort, else ``None``."""
         cmd = self._strip_mentions(text)
         if not cmd:
             return None
         m = _APPROVE_RE.match(cmd)
         if m:
-            return {"action": "approve", "category": m.group(1).lower()}
+            cohort = "tier2-test" if m.group(2) else "tier2"
+            return {"action": "approve", "category": m.group(1).lower(), "cohort": cohort}
         if _TIER1_RE.match(cmd):
-            return {"action": "tier1", "category": None}
+            return {"action": "tier1", "category": None, "cohort": None}
         if _BLOCK_RE.match(cmd):
-            return {"action": "block", "category": None}
+            return {"action": "block", "category": None, "cohort": None}
         return None
+
+    def parse_contact_reply(self, text: str) -> str | None:
+        """Return the reviewed body from an exact ``reply <message>`` command.
+
+        Only the command prefix and outer whitespace are removed. Internal
+        whitespace/newlines are preserved because the returned text is exactly
+        what the contact receives after the app performs the transport send.
+        """
+        value = str(text or "")
+        if self.bot_user_id:
+            value = re.sub(
+                rf"^\s*<@!?{re.escape(self.bot_user_id)}>\s*", "", value,
+                count=1, flags=re.I,
+            )
+        match = re.match(r"^\s*reply[ \t]+(.+?)\s*$", value, flags=re.I | re.S)
+        if not match:
+            return None
+        body = match.group(1).strip()
+        return body or None
 
     def _self_mentioned(self, mentioned_ids: Any) -> bool:
         if not self.bot_user_id:
             return False
         ids = {str(x) for x in (mentioned_ids or [])}
         return self.bot_user_id in ids
+
+    # ---------- reviewed contact replies (deterministic, no LLM/network) ----------
+
+    def _prior_contact_reply(self, message_id: str) -> dict[str, Any] | None:
+        row = self.db.execute(
+            "SELECT lead_id,status,readback,message_id_transport FROM "
+            "discord_contact_replies WHERE message_id=?", (str(message_id),),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "authorized": False, "action": "reply", "lead_id": row[0],
+            "reason": "duplicate_reply", "readback": row[2] or (
+                "Reply authorization was recorded but completion is unknown; inspect "
+                "the transport source and do not retry automatically."
+                if row[1] == "authorized" else
+                "Reply already processed; no duplicate was sent."
+            ),
+            "status": row[1], "message_id_transport": row[3], "llm": False,
+        }
+
+    def handle_contact_reply(
+        self, *, user_id: str, guild_id: str, channel_id: str,
+        parent_channel_id: str | None, message_id: str, raw_text: str,
+        is_dm: bool = False, is_group: bool = False,
+    ) -> dict[str, Any]:
+        """Authorize one reviewed reply from a bound active Tier-2 thread.
+
+        The returned message/chat binding exists only in memory for ``app.py``.
+        Durable state stores only a SHA-256 digest and length. This router never
+        calls a model or transport.
+        """
+        result = {
+            "authorized": False, "action": "reply", "lead_id": None,
+            "reason": "", "readback": "", "llm": False,
+        }
+        mid = str(message_id or "")
+        if not mid:
+            result.update(reason="missing_message_id",
+                          readback="Reply command ignored (missing message id).")
+            return result
+        prior = self._prior_contact_reply(mid)
+        if prior:
+            self._audit("contact_reply_duplicate", prior.get("lead_id"), mid)
+            return prior
+
+        def reject(reason: str, readback: str, lead: str | None = None):
+            self._audit("contact_reply_rejected", lead, f"{reason};mid={mid}")
+            result.update(reason=reason, readback=readback, lead_id=lead)
+            return result
+
+        if is_dm:
+            return reject("dm_not_allowed", "Use `reply …` inside the contact's private lead thread.")
+        if is_group:
+            return reject("group_not_allowed", "Contact replies are not accepted from group contexts.")
+        if not self.guild_id or str(guild_id) != self.guild_id:
+            return reject("wrong_guild", "Contact replies are only accepted in the configured private server.")
+        if not self.owner_user_id or str(user_id) != self.owner_user_id:
+            return reject("not_owner", "Only the configured owner can send a reviewed contact reply.")
+
+        body = self.parse_contact_reply(raw_text)
+        if body is None:
+            return reject("not_a_reply_command", "Use exactly `reply <message>` in a bound lead thread.")
+        if len(body) > 4000:
+            return reject("message_too_long", "Reply not sent: the reviewed message exceeds 4,000 characters.")
+
+        thread = self.db.execute(
+            "SELECT lead_id,category,channel_id FROM discord_threads WHERE thread_id=?",
+            (str(channel_id or ""),),
+        ).fetchone()
+        if not thread:
+            return reject("unknown_thread", "Reply not sent: this is not a bound contact lead thread.")
+        lead, category, expected_parent = thread
+        if not parent_channel_id or str(parent_channel_id) != str(expected_parent):
+            return reject("wrong_parent_channel",
+                          "Reply not sent: the lead thread's parent channel does not match.", lead)
+        if self.category_channels.get(category) != str(expected_parent):
+            return reject("category_binding_mismatch",
+                          "Reply not sent: the lead category binding is invalid.", lead)
+
+        contact = self.db.execute(
+            "SELECT c.fingerprint,c.chat_id,c.category,c.status,i.fingerprint,i.chat_id "
+            "FROM tier2_contacts c LEFT JOIN lead_identity i ON i.lead_id=c.lead_id "
+            "WHERE c.lead_id=?", (lead,),
+        ).fetchone()
+        if not contact or contact[3] != "active":
+            return reject("lead_not_active", f"Reply not sent: lead {lead} is not active Tier 2.", lead)
+        if contact[2] != category:
+            return reject("category_binding_mismatch",
+                          "Reply not sent: the active category does not match this thread.", lead)
+        if not contact[4] or not hmac.compare_digest(str(contact[0]), str(contact[4])):
+            return reject("fingerprint_mismatch",
+                          "Reply refused: the contact identity changed since this thread was bound.", lead)
+        if not contact[1] or not contact[5] or not hmac.compare_digest(str(contact[1]), str(contact[5])):
+            return reject("chat_binding_mismatch",
+                          "Reply refused: the contact chat binding changed.", lead)
+
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        inserted = self.db.execute(
+            "INSERT OR IGNORE INTO discord_contact_replies("
+            "message_id,ts,guild_id,thread_id,lead_id,message_sha256,message_length,status,readback,"
+            "message_id_transport) VALUES(?,?,?,?,?,?,?,'authorized','',NULL)",
+            (mid, self._now(), str(guild_id), str(channel_id), lead, digest, len(body)),
+        )
+        self.db.commit()
+        if inserted.rowcount != 1:
+            return self._prior_contact_reply(mid) or reject(
+                "duplicate_reply", "Reply already processed; no duplicate was sent.", lead)
+        self._audit("contact_reply_authorized", lead,
+                    f"mid={mid};sha256={digest};len={len(body)}")
+        result.update({
+            "authorized": True, "lead_id": lead, "reason": "ok",
+            "message": body, "chat_id": contact[1], "category": category,
+        })
+        return result
+
+    def complete_contact_reply(
+        self, message_id: str, status: str, readback: str,
+        message_id_transport: str | None = None,
+    ) -> None:
+        """Finalize an authorized reply without persisting its message body."""
+        row = self.db.execute(
+            "SELECT lead_id FROM discord_contact_replies WHERE message_id=?",
+            (str(message_id),),
+        ).fetchone()
+        if not row:
+            return
+        self.db.execute(
+            "UPDATE discord_contact_replies SET status=?,readback=?,message_id_transport=? "
+            "WHERE message_id=?",
+            (str(status)[:80], str(readback or "")[:800], message_id_transport, str(message_id)),
+        )
+        self.db.commit()
+        self._audit("contact_reply_completed", row[0],
+                    f"mid={message_id};status={status};transport_id={bool(message_id_transport)}")
 
     # ---------- command interception (deterministic, no LLM) ----------
 
@@ -343,7 +510,8 @@ class DiscordRouter:
             return _finish(
                 "not_a_command",
                 "Unrecognized command. Reply with exactly `@bot approve family`, "
-                "`@bot approve client`, `@bot approve vendor`, `@bot tier1`, or `@bot block`.",
+                "`@bot approve client`, `@bot approve vendor` (optionally followed by "
+                "`test`), `@bot tier1`, or `@bot block`.",
                 False,
             )
 
@@ -401,10 +569,10 @@ class DiscordRouter:
             return _finish("already_resolved", f"Intake alert for lead {lead} was already handled.",
                            False, action=parsed["action"], lead=lead)
 
-        # 6. Execute via the vetted Tier2Manager admin path. Approvals map to
-        #    the temporary tier2-test cohort ONLY — never standing tier2.
+        # 6. Execute via the vetted Tier2Manager admin path. Plain approval is
+        #    standing; only an exact trailing `test` requests tier2-test.
         if parsed["action"] == "approve":
-            admin_cmd = f"tier2-test {lead} {parsed['category']}"
+            admin_cmd = f"{parsed['cohort']} {lead} {parsed['category']}"
         elif parsed["action"] == "tier1":
             admin_cmd = f"tier1 {lead}"
         else:
@@ -444,11 +612,16 @@ class DiscordRouter:
 
     def _success_readback(self, parsed: dict[str, Any], lead: str) -> str:
         if parsed["action"] == "approve":
+            temporary = parsed.get("cohort") == "tier2-test"
+            mode = "temporary" if temporary else "standing"
+            expiry = (
+                " Expires after 24h of inactivity based only on the contact's inbound messages."
+                if temporary else " No automatic expiry."
+            )
             return (
-                f"OK: lead {lead} -> temporary Tier-2 {parsed['category']} (tier2-test). "
-                "Expires after 24h of inactivity based only on the contact's inbound messages; "
-                "reply `@bot tier1` (replying to a fresh alert) or send `tier1 " + lead +
-                "` from the owner line to downgrade. This is not a standing promotion."
+                f"OK: lead {lead} -> {mode} Tier-2 {parsed['category']}.{expiry} "
+                "Reply `@bot tier1` to a fresh alert or send `tier1 " + lead +
+                "` from the owner line to downgrade."
             )
         if parsed["action"] == "tier1":
             return f"OK: lead {lead} downgraded to Tier 1; bounded context cleared."

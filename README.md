@@ -46,9 +46,12 @@ or anything a model outputs.
   tree, metadata (EXIF/GPS) stripping, vision classification required before
   anything is retained, sensitive-content escalation, deterministic retention
 - iMessage tapback parsing; reactions are never authorization
-- Optional Discord mirror: private intake channel, reply-to-approve with exact
-  commands, per-category channels with stable per-lead threads; every hook
-  HMAC-signed; the bot is the owner's own local bot (no hosted integrations)
+- Optional Discord mirror: private intake channel, exact standing or 24-hour
+  approvals, per-category channels with stable per-lead threads, and one-shot
+  reviewed `reply <message>` responses bound to the owner/guild/thread/contact;
+  every hook is HMAC-signed and the bot is the owner's own local bot
+- Optional delayed owner seen-check for a genuinely new, still-undecided lead;
+  disabled by default and delivered only through the configured local relay
 - Outbound sending is **disabled by default** behind a manual owner gate
 - SQLite state, local audit trail, masked identities everywhere in logs/alerts
 

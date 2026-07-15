@@ -6,7 +6,7 @@
   "modes": {
     "working_tree": {
       "mode": "working_tree",
-      "files_scanned": 60,
+      "files_scanned": 61,
       "all_pass": true,
       "total_findings": 0,
       "checks": [
@@ -116,7 +116,7 @@
     },
     "index": {
       "mode": "index",
-      "files_scanned": 60,
+      "files_scanned": 61,
       "all_pass": true,
       "total_findings": 0,
       "checks": [
@@ -226,7 +226,7 @@
     },
     "history": {
       "mode": "history",
-      "files_scanned": 61,
+      "files_scanned": 82,
       "all_pass": true,
       "total_findings": 0,
       "checks": [
